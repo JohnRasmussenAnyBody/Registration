@@ -255,8 +255,7 @@ def decompose_affine_matrix(A):
     
     # Convert the rotation matrix to a rotation vector (axis-angle representation)
     rotation_vector = R.from_matrix(rotation_matrix).as_rotvec()
-    
-    
+        
     # Shearing can be represented by a vector of three independent parameters
     shear_xy = upper_triangular_matrix[0, 1] / upper_triangular_matrix[1, 1]
     shear_xz = upper_triangular_matrix[0, 2] / upper_triangular_matrix[2, 2]
@@ -349,7 +348,7 @@ Returns:
 """
 def registration_mesh_other(*args, **kwargs):
     transform, aligned = tri.registration.mesh_other(*args, **kwargs)
-    transform = regularize_affine(transform)
+    # transform = regularize_affine(transform)
     return transform, aligned
 
 """
@@ -635,6 +634,44 @@ def objective_function(params, Bb, Bbt):
     # Compute the squared sum of distances
     return squared_sum_of_distances(transformed_Bb, Bbt)
 
+# Alternative version relying on set difference volumes penalized by CoM distance.
+def objective_function2(params, Bb, Bt):
+    # Decompose the params into scaling, rotation_vector, shearing_vector, translation
+    scaling = params[0:3]
+    rotation_vector = params[3:6]
+    shearing_vector = params[6:9]
+    translation = params[9:12]
+
+    # Apply the affine transformation to Bb
+    transformed_Bb = apply_affine_transformation(Bb, scaling, rotation_vector, shearing_vector, translation)
+
+    # The objective is the relative volume difference plus a penalty for CoM difference. The latter is necessary
+    # to avoid a pathological solution where Bb is moved outside Bt and scaled to nothing.
+    return volume_difference(transformed_Bb, Bt) #+np.linalg.norm(transformed_Bb.center_mass-Bt.center_mass)
+
+# Yet another alternative using n'th moments
+def objective_function3(params, Bb, Bt, n, Btmoments):
+    # Decompose the params into scaling, rotation_vector, shearing_vector, translation
+    scaling = params[0:3]
+    rotation_vector = params[3:6]
+    shearing_vector = params[6:9]
+    translation = params[9:12]
+
+    # Apply the affine transformation to Bb
+    Bb_trans = apply_affine_transformation(Bb, scaling, rotation_vector, shearing_vector, translation)
+    
+    # savemesh(Bb_trans,'Bb_trans.obj')
+    
+    # Compute relative moment differences
+    msum = 0
+    Bbmoments = raw_moments_about_origin(Bb_trans, n, origin=Bt.center_mass)
+    for i in range(0,n):
+        # if i%2 != 0:
+        #     continue
+        msum += np.square(Bbmoments[i]/Btmoments[i] - 1)
+
+    return msum
+
 """
 This function determines the optimum affine mapping of the base mesh Bb onto the
 target Bt. The returned vector contains in sequence
@@ -665,6 +702,136 @@ def optimize_affine_transformation(Bb, Bbt):
     result = minimize(objective_function, initial_params, args=(Bb, Bbt), method='L-BFGS-B')
 
     return result
+
+"""
+Try all valid right-handed flip alignments of Bt to Bb.
+Return the one minimizing volume of symmetric difference.
+
+Parameters:
+- Bb: base mesh (trimesh)
+- Bt: target mesh to align (trimesh)
+
+Returns:
+- best_T: best 4x4 transformation matrix
+"""
+def best_flip_by_volume(Bb, Bt):
+
+    assert Bb.is_watertight and Bt.is_watertight, "Meshes must be watertight."
+
+    flip_options = [
+        np.diag([+1, +1, +1]),
+        np.diag([+1, -1, -1]),
+        np.diag([-1, +1, -1]),
+        np.diag([-1, -1, +1])
+    ]
+
+    best_T = None
+    min_vol_error = np.inf
+    
+    for flip in flip_options:
+        # Step 1: Translate Bb to origin
+        T1 = np.eye(4)
+        T1[:3, 3] = -Bb.center_mass
+    
+        # Step 2: Flip
+        T2 = np.eye(4)
+        T2[:3, :3] = flip
+    
+        # Step 3: Translate to Bt's COM
+        T3 = np.eye(4)
+        T3[:3, 3] = Bt.center_mass
+    
+        # Final transform: T = T3 @ T2 @ T1
+        T = T3 @ T2 @ T1
+    
+        Bb_test = Bb.copy()
+        Bb_test.apply_transform(T)
+        savemesh(Bb_test,'Bb_test1.obj')
+    
+        vol_error = volume_difference(Bb, Bb_test)
+        print(f"Flip {flip.diagonal()} -> Volume difference: {vol_error:.3f}")
+    
+        if vol_error < min_vol_error:
+            min_vol_error = vol_error
+            best_T = T
+
+    return best_T
+
+def callback(xk):
+    print("Current parameters:", xk)
+
+# Alternative version using set difference as objective function
+def optimize_affine_transformation2(Bb, Bt):
+    
+    # savemesh(Bb,'Bb.obj')
+    savemesh(Bt,'Bt.obj')
+
+    assert Bb.is_watertight and Bt.is_watertight, "Meshes must be watertight."
+    
+    momentorder = 4
+    Btmoments = raw_moments_about_origin(Bt,momentorder,Bt.center_mass)
+
+    # Optimize for each flip option and use the best one
+    flip_options = [
+        np.diag([-1, -1, +1]),
+        np.diag([+1, +1, +1]),
+        np.diag([+1, -1, -1]),
+        np.diag([-1, +1, -1]),
+    ]
+
+    best_T = None
+    min_vol_error = np.inf
+    
+    for flip in flip_options:
+        # Step 1: Translate Bb to origin
+        T1 = np.eye(4)
+        T1[:3, 3] = -Bb.center_mass
+    
+        # Step 2: Flip
+        T2 = np.eye(4)
+        T2[:3, :3] = flip
+    
+        # Step 3: Translate to Bt's COM
+        T3 = np.eye(4)
+        T3[:3, 3] = Bt.center_mass
+    
+        # Final transform: T = T3 @ T2 @ T1
+        T = T3 @ T2 @ T1
+    
+        Bb_start = Bb.copy()
+        Bb_start.apply_transform(T)
+        savemesh(Bb_start,'Bb_start.obj')
+    
+        # Initiate design variables
+        scaling_factors, rotation_vector, shearing_vector, translation = decompose_affine_matrix(T)
+        initial_params = np.zeros(12)
+        initial_params[0:3] = scaling_factors
+        initial_params[3:6] = rotation_vector
+        initial_params[6:9] = shearing_vector
+        initial_params[9:12] = translation
+            
+        # Define bounds if necessary (e.g., to constrain scaling or translation)
+        # bounds = [(0.5, 2.0)] * 3 + [(-np.pi, np.pi)] * 3 + [(-1, 1)] * 3 + [(-5, 5)] * 3
+    
+        # Minimize the objective function
+        # Set options for the optimizer, including verbose output
+        options = {
+            'disp': True,  # Enable verbose output
+            'maxiter': 100  # Set the maximum number of iterations (optional)
+        }
+        # result = minimize(objective_function, initial_params, args=(Bb, Bbt), bounds=bounds, method='L-BFGS-B', options=options)
+        result = minimize(objective_function3, initial_params, args=(Bb, Bt, momentorder, Btmoments), method='BFGS', options=options, callback=callback)
+        
+        if result.fun < min_vol_error:
+            min_vol_error = result.fun
+            best_T = recompose_affine_matrix(result.x[0:3], result.x[3:6], result.x[6:9], result.x[9:12])
+
+            Bb_end = Bb.copy()
+            Bb_end.apply_transform(best_T)
+            savemesh(Bb_end,'Bb_end.obj')
+
+    return result
+
 
 """
 Assign a random color to a mesh and save it
@@ -731,32 +898,82 @@ n (int): The order of the moment to compute.
 Returns:
 float: The n-th moment of the mesh distribution.
 """
-def nth_moment_about_center_of_mass(mesh, n):
-    assert mesh.is_watertight, "Mesh must be watertight to compute moments."
+# def nth_moment_about_center_of_mass(mesh, n):
+#     assert mesh.is_watertight, "Mesh must be watertight to compute moments."
 
-    # Compute and align the mesh to the principal axes
-    aligned_mesh = mesh.copy()
-    align_principal_axes(aligned_mesh)  # Align principal axes
+#     # Compute and align the mesh to the principal axes
+#     aligned_mesh = mesh.copy()
+#     align_principal_axes(aligned_mesh)  # Align principal axes
 
-    # Compute the n-th moment
+#     # Compute the n-th moment
+#     moment = 0.0
+
+#     for face in aligned_mesh.faces:
+#         vertices = aligned_mesh.vertices[face]
+        
+#         # Calculate the normal and the area of the face
+#         normal = np.cross(vertices[1] - vertices[0], vertices[2] - vertices[0])
+#         area = np.linalg.norm(normal) / 2.0
+#         normal = normal / np.linalg.norm(normal)
+        
+#         # Centroid of the triangle (face)
+#         centroid = np.mean(vertices, axis=0)
+        
+#         # Contribution of this face to the n-th moment
+#         moment += np.dot(centroid**(n+1), normal) * area
+        
+#     moment /= 3*(n+1)
+    
+#     return moment
+
+def nth_moment_about_center_of_mass(mesh: tri.Trimesh, n: int) -> float:
+    """
+    Compute the scalar n-th moment about the center of mass of a watertight mesh
+    using the divergence theorem over surface triangles.
+
+    Parameters:
+    mesh (trimesh.Trimesh): A watertight 3D surface mesh.
+    n (int): Order of the moment to compute (n ≥ 1).
+
+    Returns:
+    float: Scalar value of the n-th moment about the center of mass.
+    """
+    assert mesh.is_watertight, "Mesh must be watertight to compute volume integrals."
+
+    # Compute the center of mass of the volume
+    center_of_mass = mesh.center_mass
+
+    # Get triangle faces and vertex coordinates
+    faces = mesh.faces
+    vertices = mesh.vertices
+
     moment = 0.0
 
-    for face in aligned_mesh.faces:
-        vertices = aligned_mesh.vertices[face]
-        
-        # Calculate the normal and the area of the face
-        normal = np.cross(vertices[1] - vertices[0], vertices[2] - vertices[0])
+    for face in faces:
+        tri = vertices[face]
+
+        # Triangle normal and area
+        normal = np.cross(tri[1] - tri[0], tri[2] - tri[0])
         area = np.linalg.norm(normal) / 2.0
-        normal = normal / np.linalg.norm(normal)
-        
-        # Centroid of the triangle (face)
-        centroid = np.mean(vertices, axis=0)
-        
-        # Contribution of this face to the n-th moment
-        moment += np.dot(centroid**(n+1), normal) * area
-        
-    moment /= 3*(n+1)
-    
+        if area == 0:
+            continue  # Skip degenerate triangles
+        unit_normal = normal / np.linalg.norm(normal)
+
+        # Triangle centroid
+        tri_centroid = np.mean(tri, axis=0)
+
+        # Vector from center of mass to triangle centroid
+        r = tri_centroid - center_of_mass
+
+        # Vector field F(r) = r * |r|^(n-1)
+        F = r * (np.linalg.norm(r) ** (n - 1))
+
+        # Dot with surface normal and accumulate
+        moment += np.dot(F, unit_normal) * area
+
+    # Final scaling factor from divergence theorem
+    moment /= (3 * n)
+
     return moment
 
 def nth_moment_about_center_of_mass_normalized(mesh, n):
@@ -893,6 +1110,49 @@ def compute_invariants(mesh):
         'hu_moments': hu_moments
     }
 
+
+"""
+Compute scalar raw moments of orders 1 to max_order about a given origin using the divergence theorem.
+
+Parameters:
+mesh (trimesh.Trimesh): A watertight 3D mesh.
+max_order (int): Highest moment order to compute (inclusive).
+origin (np.ndarray): 3D point to compute moments about.
+
+Returns:
+list: List of scalar moments [M1, M2, ..., M_max_order]
+"""
+def raw_moments_about_origin(mesh: tri.Trimesh, max_order: int, origin=np.zeros(3)) -> list:
+
+    assert mesh.is_watertight, "Mesh must be watertight."
+    assert max_order >= 1, "Order must be ≥ 1."
+
+    moments = np.zeros(max_order)
+    vertices = mesh.vertices
+    faces = mesh.faces
+
+    for face in faces:
+        tri = vertices[face]
+
+        # Compute face normal and area
+        normal = np.cross(tri[1] - tri[0], tri[2] - tri[0])
+        area = np.linalg.norm(normal) / 2.0
+        if area == 0:
+            continue  # Degenerate triangle
+
+        normal = normal / np.linalg.norm(normal)
+
+        # Triangle centroid relative to origin
+        centroid = tri.mean(axis=0) - origin
+
+        # Compute all moment orders in a single loop
+        for n in range(1, max_order + 1):
+            integrand = np.dot(centroid**(n + 1), normal)
+            moments[n - 1] += integrand * area / (3 * (n + 1))
+
+    return moments.tolist()
+
+
 # This function maps the base femur to the target femur given by a dict of
 # mapping maparemeters
 # If sharp = True, the heaviside interpolation function becomes sharp.
@@ -964,3 +1224,25 @@ def create_cyl(point1, point2, radius=2, extend=1.0):
     cylinder.visual.vertex_colors = (255,0,0)
     
     return cylinder
+
+
+"""
+Compute symmetric volume difference: volume(Bb - Bt) + volume(Bt - Bb)
+"""
+def volume_difference(Bb, Bt):
+    try:
+        diff1 = tri.boolean.difference([Bb, Bt], engine='manifold')
+        diff2 = tri.boolean.difference([Bt, Bb], engine='manifold')
+
+        vol1 = diff1.volume if diff1.is_volume else 0
+        vol2 = diff2.volume if diff2.is_volume else 0
+
+        return vol1 + vol2
+
+    except BaseException as e:
+        print(f"Boolean operation failed: {e}")
+        return np.inf
+
+def relative_volume_difference(Bb, Bt):
+    relvol = volume_difference(Bb,Bt)/Bt.volume if Bt.volume > 0 else np.inf
+    return relvol

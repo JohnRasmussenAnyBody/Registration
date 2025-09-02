@@ -32,10 +32,10 @@ def extract_labels(index):
     return [int(ix[-1]) - 1 for ix in index]
 
 """
-Fit LDA (linear discriminant analysis) in PC1-PC3 space and return separating 
+Fit LDA (linear discriminant analysis) in PC1-PC2 space and return separating 
 direction in original PCA space.
 """
-def project_lda_direction(pc_df, labels, pc1='PC1', pc2='PC3'):
+def project_lda_direction(pc_df, labels, pc1='PC1', pc2='PC2'):
     lda = LinearDiscriminantAnalysis(n_components=1)
     lda.fit(pc_df[[pc1, pc2]], labels)
     return lda.coef_[0]
@@ -43,19 +43,31 @@ def project_lda_direction(pc_df, labels, pc1='PC1', pc2='PC3'):
 """
 Transform LDA direction from PCA space back to original standardized space.
 """
-def compute_original_direction(pca_components, direction_pc, pcs=[0, 2]):
+def compute_original_direction(pca_components, direction_pc, pcs=[0, 1]):
     return direction_pc[0] * pca_components[pcs[0]] + direction_pc[1] * pca_components[pcs[1]]
 
 """
 Scatter plot of two principal components, with label highlighting.
 """
-def plot_2d_scatter(pc_df, labels, label_strings, pc1='PC1', pc2='PC3', highlight_str='01L_Fe'):
+def plot_2d_scatter(pc_df, labels, label_strings, pc1='PC1', pc2='PC3', highlight_str='01L_Fe', direction_pc=None):
     plt.figure(figsize=(10, 6))
     scatter = plt.scatter(pc_df[pc1], pc_df[pc2], c=labels, cmap='viridis', s=100)
 
+    # Annotate points of interest
     for i, label in enumerate(label_strings):
         if highlight_str in label:
             plt.text(pc_df.iloc[i][pc1], pc_df.iloc[i][pc2], label, fontsize=5, ha='right')
+
+    # Optional: LDA direction line
+    if direction_pc is not None:
+        v = direction_pc / np.linalg.norm(direction_pc)
+        center = pc_df[[pc1, pc2]].mean().values
+        scale = 5
+        line_start = center - scale * v
+        line_end = center + scale * v
+        plt.plot([line_start[0], line_end[0]], [line_start[1], line_end[1]],
+                 color='red', linestyle='--', linewidth=2, label='LDA direction')
+        plt.legend()
 
     plt.xlabel(pc1)
     plt.ylabel(pc2)
@@ -120,21 +132,28 @@ if __name__ == "__main__":
     # Load volume integral properties from bone ends for which we know the 
     # classification and standardize the data for forther procesing
     params = pd.read_excel('AllEndParameters.xlsx', index_col=0)
+    params.drop(columns=['E0'], errors='ignore', inplace=True) #Turns out E0 is confounding
+        
     scaler = StandardScaler()
     sparams = pd.DataFrame(scaler.fit_transform(params), index=params.index, columns=params.columns)
     
     # PCA and labeling
-    pc_df, pca_obj = perform_pca(sparams, n_components=3)
+    pc_df, pca_obj = perform_pca(sparams, n_components=4)
     labels = extract_labels(params.index)
     
     # 2D PCA scatter
-    plot_2d_scatter(pc_df, labels, params.index)
-    
+    pcs = [0,1]  # Chosen PCs
+    pc1=pc_df.columns[pcs[0]]
+    pc2=pc_df.columns[pcs[1]]
+
     # We assume that the points form two distinct clusters in the PC space.
     # To fnd the singl dimension that distinguishes the clusters, we
     # perform a linear discriminant analysis.
-    direction_pc = project_lda_direction(pc_df, labels)
-    direction_scaled = compute_original_direction(pca_obj.components_, direction_pc)
+    direction_pc = project_lda_direction(pc_df, labels, pc1=pc1, pc2=pc2)
+
+    plot_2d_scatter(pc_df, labels, params.index, pc1=pc1, pc2=pc2, direction_pc=direction_pc)
+    
+    direction_scaled = compute_original_direction(pca_obj.components_, direction_pc, pcs=pcs)
     
     # Wrap and print scaled weights
     direction_series = pd.Series(direction_scaled, index=sparams.columns)
@@ -143,7 +162,7 @@ if __name__ == "__main__":
     
     # Convert to unscaled space
     direction_unscaled = direction_series / scaler.scale_
-    direction_unscaled = pd.Series(direction_unscaled, index=params.columns)
+    direction_unscaled = direction_series / pd.Series(scaler.scale_, index=sparams.columns)
     
     # Save direction_unscaled to a pickle file. Classifications of new bones
     # are done by loading this object.

@@ -58,16 +58,12 @@ plt.show()
 directory = 'C:/Users/jr/Documents/GitHub/Registration/Femurs'
 base = 'tlem2'
 baseside = 'R'
-Bb = tri.load_mesh(directory+'/'+base+'.obj')
+Bb = tri.load_mesh(directory+'/obj/'+base+'.obj')
 
 # Create a new femur
-f = {'HJr': 16.3540459838485,
-     'KJr': 17.8220295718482,
-     'Antetor': 0.0,
-     'FL': 330.426647537482,
-     'KEW': 90.6941519091907,
-     'NA': 130,
-     'Valgus': 0.0,
+f = {
+     'Antetor': 30.0,
+     'FL': 450
      }
 row = pca.closest_pca(f)
 

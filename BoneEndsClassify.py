@@ -198,10 +198,10 @@ def train_classifier(data, feature_columns, labels):
 def compute_end_params(mesh,femur=''):
     # Set up a dataframe with correct column and row names
     cols = []
-    imoments = [2]
+    imoments = [2,3,4]
     for i in imoments:
         cols.append('I'+str(i))
-    hmoments = [0,1]
+    hmoments = [0,1,2]
     for i in hmoments:
         cols.append('H'+str(i))
     emoments = [0,1,2]
