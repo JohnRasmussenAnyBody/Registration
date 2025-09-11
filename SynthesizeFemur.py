@@ -62,8 +62,7 @@ Bb = tri.load_mesh(directory+'/obj/'+base+'.obj')
 
 # Create a new femur
 f = {
-     'Antetor': 30.0,
-     'FL': 450
+     'Sex': 1,
      }
 row = pca.closest_pca(f)
 

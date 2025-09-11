@@ -8,7 +8,7 @@ Tools for mesh manipulation
 """
 import numpy as np
 from scipy.linalg import polar
-from scipy.spatial.transform import Rotation as R
+from scipy.spatial.transform import Rotation
 from scipy.linalg import logm, expm, svd, eigvalsh
 from scipy.optimize import minimize
 from scipy.special import expit
@@ -79,23 +79,17 @@ Returns:
 numpy.ndarray: 4x4 rigid transformation matrix.
 """
 def extract_rigid_transformation(A):
-
-    # Extract the upper-left 3x3 submatrix (rotation + scaling/shearing)
     M = A[:3, :3]
-    
-    # Use SVD to extract the closest orthogonal matrix (rotation matrix)
-    U, _, Vt = np.linalg.svd(M)
-    R = np.dot(U, Vt)
-    
-    # Extract the translation vector
     t = A[:3, 3]
-    
-    # Construct the rigid transformation matrix
-    rigid_transformation = np.eye(4)
-    rigid_transformation[:3, :3] = R
-    rigid_transformation[:3, 3] = t
-    
-    return rigid_transformation
+    U, _, Vt = np.linalg.svd(M)
+    Rm = U @ Vt
+    if np.linalg.det(Rm) < 0:
+        U[:, -1] *= -1
+        Rm = U @ Vt
+    rigid = np.eye(4)
+    rigid[:3, :3] = Rm
+    rigid[:3, 3] = t
+    return rigid
 
 """
 Decompose an affine transformation matrix into rigid and non-rigid components.
@@ -235,37 +229,61 @@ def interpolate_rotation_vectors(rotvec1, rotvec2, alpha):
 
 def decompose_affine_matrix(A):
     """
-    Decomposes a 4x4 affine transformation matrix into its scaling, rotation (as a vector),
-    shearing (as a vector), and translation components.
-    
-    Parameters:
-    A (numpy.ndarray): 4x4 affine transformation matrix.
-    
+    Decompose a 4x4 affine matrix A into components consistent with
+    recompose_affine_matrix():
+        linear_part = R @ (diag(scaling) @ shearing_upper)
+
     Returns:
-    tuple: (scaling, rotation_vector, shearing_vector, translation)
+        scaling (3,), rotation_vector (3,), shearing_vector (3,), translation (3,)
     """
-    # Extract the translation component
-    translation = A[:3, 3]
-    
-    # Extract the linear transformation matrix
-    linear_part = A[:3, :3]
-    
-    # Perform polar decomposition to separate rotation and shearing
-    rotation_matrix, upper_triangular_matrix = polar(linear_part)
-    
-    # Convert the rotation matrix to a rotation vector (axis-angle representation)
-    rotation_vector = R.from_matrix(rotation_matrix).as_rotvec()
-        
-    # Shearing can be represented by a vector of three independent parameters
-    shear_xy = upper_triangular_matrix[0, 1] / upper_triangular_matrix[1, 1]
-    shear_xz = upper_triangular_matrix[0, 2] / upper_triangular_matrix[2, 2]
-    shear_yz = upper_triangular_matrix[1, 2] / upper_triangular_matrix[2, 2]
+    # Translation
+    translation = A[:3, 3].copy()
+
+    # Linear part
+    M = A[:3, :3].copy()
+
+    # QR decomposition: M = Q @ R, with Q orthogonal, R upper-triangular
+    Q, R = np.linalg.qr(M)
+
+    # Ensure upper-triangular R has positive diagonal entries
+    # Flip signs column-wise to make diag(R) positive
+    for i in range(3):
+        if R[i, i] < 0:
+            R[i, :] *= -1
+            Q[:, i] *= -1
+
+    # Ensure Q is a proper rotation (det = +1); if not, flip last column/row
+    if np.linalg.det(Q) < 0:
+        Q[:, -1] *= -1
+        R[-1, :] *= -1
+
+    # At this point:
+    # - Q is a proper rotation (det +1)
+    # - R is upper-triangular with positive diagonal
+    rotation_matrix = Q
+
+    # Convert rotation matrix to rotation vector
+    rotation_vector = Rotation.from_matrix(rotation_matrix).as_rotvec()
+
+    # Extract scaling and shearing from the upper-triangular R
+    # We want R == diag(scaling) @ shearing_upper,
+    # where shearing_upper has ones on the diagonal:
+    #   shearing_upper = [[1, sh_xy, sh_xz],
+    #                     [0,    1, sh_yz],
+    #                     [0,    0,    1]]
+    scaling = np.array([R[0, 0], R[1, 1], R[2, 2]])
+
+    # Guard against tiny scales to avoid division warnings
+    eps = 1e-15
+    s1 = scaling[1] if abs(scaling[1]) > eps else np.sign(scaling[1]) * eps
+    s2 = scaling[2] if abs(scaling[2]) > eps else np.sign(scaling[2]) * eps
+
+    shear_xy = R[0, 1] / s1
+    shear_xz = R[0, 2] / s2
+    shear_yz = R[1, 2] / s2
     shearing_vector = np.array([shear_xy, shear_xz, shear_yz])
-    
-    # Scaling factors are the diagonal elements of the upper triangular matrix
-    scaling_factors = np.diag(upper_triangular_matrix)
-    
-    return scaling_factors, rotation_vector, shearing_vector, translation
+
+    return scaling, rotation_vector, shearing_vector, translation
 
 def decompose_affine_matrix_svd(A):
     """
@@ -288,7 +306,7 @@ def decompose_affine_matrix_svd(A):
     shearing_vector = np.array([shear_matrix[0, 1], shear_matrix[0, 2], shear_matrix[1, 2]])
 
     # Convert the rotation matrix to a rotation vector (axis-angle representation)
-    rotation_vector = R.from_matrix(rotation_matrix).as_rotvec()
+    rotation_vector = Rotation.from_matrix(rotation_matrix).as_rotvec()
 
     return scaling_factors, rotation_vector, shearing_vector, translation
 
@@ -307,7 +325,7 @@ def recompose_affine_matrix(scaling, rotation_vector, shearing_vector, translati
     numpy.ndarray: 4x4 affine transformation matrix.
     """
     # Convert the rotation vector back to a rotation matrix
-    rotation_matrix = R.from_rotvec(rotation_vector).as_matrix()
+    rotation_matrix = Rotation.from_rotvec(rotation_vector).as_matrix()
     
     # Recreate the shearing matrix
     shearing_matrix = np.eye(3)
@@ -326,19 +344,6 @@ def recompose_affine_matrix(scaling, rotation_vector, shearing_vector, translati
     return affine_matrix
 
 """
-Ensure that the 4x4 affine matrix A has a proper rotation component (det > 0).
-If the rotation part is improper (i.e., det < 0), correct it by flipping one axis.
-"""
-def regularize_affine(A):
-    R = A[:3, :3]
-    det = np.linalg.det(R)
-    if det < 0:
-        # Flip the last column to correct the handedness
-        R[:, -1] *= -1
-        A[:3, :3] = R
-    return A
-
-"""
 Wrapper for trimesh.registration.mesh_other that ensures the returned transform
 has a proper rotation matrix (det > 0).
 
@@ -348,8 +353,7 @@ Returns:
 """
 def registration_mesh_other(*args, **kwargs):
     transform, aligned = tri.registration.mesh_other(*args, **kwargs)
-    # transform = regularize_affine(transform)
-    return transform, aligned
+    return transform, aligned  # no "regularization" here
 
 """
 Wrapper for trimesh.registration.icp that ensures the returned transform
@@ -361,16 +365,10 @@ Returns:
 """
 def registration_icp(*args, **kwargs):
     result = tri.registration.icp(*args, **kwargs)
-
-    # Handle multiple return types
     if isinstance(result, np.ndarray):
-        # Only transform returned
-        transform = regularize_affine(result)
-        return transform
+        return result
     elif isinstance(result, (list, tuple)) and len(result) >= 1:
-        # Multiple values returned
-        transform = regularize_affine(result[0])
-        return (transform,) + tuple(result[1:])
+        return result
     else:
         raise ValueError("trimesh.registration.icp failed")
 
@@ -597,7 +595,7 @@ resulting mesh is returned. mesh is not modified.
 """
 def apply_affine_transformation(mesh, scaling, rotation_vector, shearing_vector, translation):
     # Convert rotation vector to rotation matrix
-    rotation_matrix = R.from_rotvec(rotation_vector).as_matrix()
+    rotation_matrix = Rotation.from_rotvec(rotation_vector).as_matrix()
 
     # Create shearing matrix
     shearing_matrix = np.eye(3)
