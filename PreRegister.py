@@ -9,8 +9,10 @@ This program  does two things:
 @author: jr
 """
 
-# import sys
+import sys
 import os
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
 import numpy as np
 import pandas as pd
 import trimesh as tri
@@ -76,23 +78,27 @@ def rigid_end_registration(Bb,Bt,direction,mirror=False):
     # Now, register the proximal and distal ends to Bb and decompose the
     # tranformation matrices to rigid and soft parts
     # Aprox = tri.registration.icp(Btprox.vertices, Bbprox)
-    Aprox = mt.registration_mesh_other(Btprox, Bbprox, scale=True, icp_first=100)
-    AproxRig, AproxSoft = mt.decompose_affine_transformation(Aprox[0])
+    Aprox, diff1 = mt.registration_mesh_other(Btprox, Bbprox, scale=True, icp_first=100)
+    AproxRig, AproxSoft = mt.decompose_affine_transformation(Aprox)
 
     # Compute initial transformation of the distal end using the scaling and rotation
     # of the proximal end plus translation to the CoM of Bbdist
     Bttmp = Btdist.copy()
-    Bttmp.apply_transform(Aprox[0])
+    Bttmp.apply_transform(Aprox)
     trans = mt.recompose_affine_matrix([1,1,1], [0,0,0], [0,0,0], Bbdist.center_mass - Bttmp.center_mass)
-    A = trans @ Aprox[0]
+    A = trans @ Aprox
 
-    Adist = mt.registration_icp(Btdist.vertices, Bbdist, scale=True, initial=A)
-    # Adist = mt.registration_mesh_other(Btdist, Bbdist, scale=True, icp_first=10, initial=Aprox[0])
+    result = mt.registration_icp(Btdist.vertices, Bbdist, scale=True, initial=A)
+    Adist = result[0]
+    if len(result) > 1:
+        diff2 = result[-1]
+    else:
+        diff2 = 0.0
     
-    AdistRig, AdistSoft = mt.decompose_affine_transformation(Adist[0])
+    AdistRig, AdistSoft = mt.decompose_affine_transformation(Adist)
     
-    # Btprox.apply_transform(Aprox[0])
-    # Btdist.apply_transform(Adist[0])
+    # Btprox.apply_transform(Aprox)
+    # Btdist.apply_transform(Adist)
     # mt.savemesh(Btprox,'Btprox.obj')
     # mt.savemesh(Btdist,'Btdist.obj')
     # mt.savemesh(Bbprox,'Bbprox.obj')
@@ -107,13 +113,11 @@ def rigid_end_registration(Bb,Bt,direction,mirror=False):
     
     # Now, the two bones should be rigidly aligned, and we can apply
     # the non-rigid (soft) part of the transformation to the ends
-    Btprox.apply_transform(Aprox[0])
-    Btdist.apply_transform(Adist[0])
+    Btprox.apply_transform(Aprox)
+    Btdist.apply_transform(Adist)
     
-    AproxInv = mt.inverse_affine_transformation(Aprox[0])
-    AdistInv = mt.inverse_affine_transformation(Adist[0])
-    diff1 = Aprox[-1]
-    diff2 = Adist[-1]
+    AproxInv = mt.inverse_affine_transformation(Aprox)
+    AdistInv = mt.inverse_affine_transformation(Adist)
     
     return(AproxInv, AdistInv, diff1, diff2, Bt)
 

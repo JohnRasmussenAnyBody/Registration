@@ -411,7 +411,7 @@ uknee = e/np.linalg.norm(e)
 ckm = ck+uknee*ecw/2
 ckl = ck-uknee*ecw/2
 
-# Fit a cylinder to the femoral neck. One end of it is ficed to the hip center
+# Fit a cylinder to the femoral neck. One end of it is fixed to the hip center
 Bb = tri.load_mesh(directory+'/'+neck+'.obj')
 params = fit_cylinder_anchor_point(Bb.vertices,c)
 cylinder_params = c.tolist()+list(params)
@@ -423,7 +423,7 @@ pm = (c+p2)/2
 new_params = cylinder_params
 new_params[0:3] = pm
 cylinder = generate_fitted_cylinder(new_params, length)
-mt.savemesh(cylinder,directory+'/neckcylinder.obj')
+mt.savemesh(cylinder,directory+'/Templates/neckcylinder.obj')
 
 # Fit a cylinder to the shaft. This cylinder is anchored to the knee joint
 # center by one end. The other end is constrained to the neck cylinder center 
@@ -434,7 +434,7 @@ x0, y0, r, t, axis = fit_cylinder_least_squares_with_anchor_xy(Bb.vertices, c, u
 cn = c + t*uneck  # Neck kink point
 ckk = np.array([x0,y0,ck[2]])
 shaftcyl = mt.create_cyl(ckk,cn,radius=r,extend=1.0)
-mt.savemesh(shaftcyl,directory+'/shaftcylinder.obj')
+mt.savemesh(shaftcyl,directory+'/Templates/shaftcylinder.obj')
 
 # The shaft cylinder does not begin at the knee joint point, so we must
 # construct a new unit vector from ck to cn
@@ -443,9 +443,6 @@ ushaft = (cn-ck)/np.linalg.norm(cn-ck)
 # Compute angles
 rneck, rmsd = Rotation.align_vectors([ushaft], [uneck])
 aneck = rneck.magnitude()
-
-rantetor, rmsd = Rotation.align_vectors([uknee], [uneck])
-antetor = rantetor.as_euler('zyx')[0]
 
 # Update the femurs table with the identified parameters for the base bone
 femurs = pd.read_excel('Femurs/femurs.xlsx',index_col=0)
@@ -473,7 +470,14 @@ femurs.loc[base,'NCz'] = cn[2]
 # Various parameters
 femurs.loc[base,'FL'] = np.linalg.norm(c-(ckm+ckl)/2)  # Functional length
 femurs.loc[base,'KEW'] = np.linalg.norm(ckm-ckl)  # Knee width
-femurs.loc[base,'Antetor'] = antetor  # Antetorsion angle
+
+antetor = np.arctan2(uneck[0]*uknee[1] - uneck[1]*uknee[0], uneck[0]*uknee[0] + uneck[1]*uknee[1])*180/np.pi
+if antetor < -90:
+    antetor += 180
+if antetor > 90:
+    antetor -= 180
+
+femurs.loc[base,'Antetor'] = antetor
 femurs.loc[base,'NA'] = aneck  # Neck angle
 
 femurs.to_excel('Femurs/femurs.xlsx')

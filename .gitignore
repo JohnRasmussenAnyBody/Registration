@@ -213,4 +213,5 @@ Femurs/
 backup/
 STL_Files_Pig/
 *.png
-
+*.obj
+*.stl

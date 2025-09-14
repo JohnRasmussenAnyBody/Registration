@@ -366,7 +366,7 @@ Returns:
 def registration_icp(*args, **kwargs):
     result = tri.registration.icp(*args, **kwargs)
     if isinstance(result, np.ndarray):
-        return result
+        return (result)
     elif isinstance(result, (list, tuple)) and len(result) >= 1:
         return result
     else:

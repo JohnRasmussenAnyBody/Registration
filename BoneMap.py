@@ -187,8 +187,13 @@ for bone in objfiles:
     # Knee epicondyle width
     femurs.loc[bone,'KEW'] = np.linalg.norm(kjcm-kjcl)
 
-    # Antetorsion angle is the difference between z rotations
-    femurs.loc[bone,'Antetor'] = (rot2[2]-rot1[2])*180/np.pi
+    # Antetorsion angle is the angle between knee axis and neck axis
+    # projected to the z plane
+    antetor = np.arctan2(uneck[0]*uknee[1] - uneck[1]*uknee[0], uneck[0]*uknee[0] + uneck[1]*uknee[1])*180/np.pi
+    if antetor < -90:
+        antetor += 180
+    if antetor > 90:
+        antetor -= 180
     
     # Knee joint radius. The axis is rougly aligned with the y axis, so we scale with the mean of x and z scaling
     femurs.loc[bone,'KJr'] = femurs.loc[base,'KJr']*(scale2[0]+scale2[2])/2
