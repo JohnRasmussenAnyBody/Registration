@@ -194,6 +194,7 @@ for bone in objfiles:
         antetor += 180
     if antetor > 90:
         antetor -= 180
+    femurs.loc[bone,'Antetor'] = antetor
     
     # Knee joint radius. The axis is rougly aligned with the y axis, so we scale with the mean of x and z scaling
     femurs.loc[bone,'KJr'] = femurs.loc[base,'KJr']*(scale2[0]+scale2[2])/2

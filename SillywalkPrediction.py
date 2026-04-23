@@ -55,9 +55,10 @@ plt.show()
 
 # Create a new subject
 f = {
-        'Sex': 1,
-        'Stature': 167,
-        'Bodyweight': 65,
+        'Stature': 178,
+        'Bodyweight': 85,
+        'Shoesize': 38
+        # 'Bodyweight': 65,
      }
 row = pca.closest_pca(f)
 
